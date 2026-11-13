@@ -1,0 +1,45 @@
+# Full stack: docker compose up --build
+# SECURITY NOTE: the backend container mounts the Docker socket so it can launch sandbox containers.
+# The socket is NEVER mounted into the sandbox containers themselves. If you prefer, run the backend on the
+# host instead (see README "Local development") and use compose only for PostgreSQL.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: devteam
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devteam}
+      POSTGRES_DB: devteam
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U devteam"]
+      interval: 5s
+      retries: 10
+
+  sandbox-image:
+    build: ./sandbox
+    image: devteam-sandbox:latest
+    profiles: ["build-only"]
+
+  backend:
+    build: ./backend
+    env_file: ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://devteam:${POSTGRES_PASSWORD:-devteam}@db:5432/devteam
+      WORKSPACE_ROOT: /data/workspaces
+      # Must be the absolute HOST path that backs /data/workspaces (sandbox bind mounts are resolved by the host daemon)
+      WORKSPACE_HOST_PATH: ${WORKSPACE_HOST_PATH:?set WORKSPACE_HOST_PATH in a root .env file}
+    depends_on:
+      db: { condition: service_healthy }
+    ports: ["8000:8000"]
+    volumes:
+      - ${WORKSPACE_HOST_PATH}:/data/workspaces
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  frontend:
+    build: ./frontend
+    ports: ["5173:80"]
+    depends_on: [backend]
+
+volumes:
+  pgdata:
